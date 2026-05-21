@@ -29,20 +29,20 @@ public class PositionListIndex {
 
     private List<IntArrayList> calculateClusters(final String[] values) {
         Map<String, IntArrayList> invertedIndex = new HashMap<>(values.length);
-        for (int recordIndex = 0; recordIndex < values.length; recordIndex++) {
-            invertedIndex.putIfAbsent(values[recordIndex], new IntArrayList());
-            invertedIndex.get(values[recordIndex]).add(recordIndex);
+        for (int i = 0; i < values.length; i++) {
+            invertedIndex.putIfAbsent(values[i], new IntArrayList());
+            invertedIndex.get(values[i]).add(i);
         }
-        return invertedIndex.values().stream().filter(cluster -> cluster.size() > 1).collect(Collectors.toList());
+        return invertedIndex.values().stream().filter(c -> c.size() > 1).collect(Collectors.toList());
     }
 
-    private int[] calculateInverted(List<IntArrayList> clusters, int relationLength) {
-        int[] invertedClusters = new int[relationLength];
-        Arrays.fill(invertedClusters, -1);
-        for (int clusterIndex = 0; clusterIndex < clusters.size(); clusterIndex++)
-            for (int recordIndex : clusters.get(clusterIndex))
-                invertedClusters[recordIndex] = clusterIndex;
-        return invertedClusters;
+    private int[] calculateInverted(List<IntArrayList> clusters, int length) {
+        int[] inv = new int[length];
+        Arrays.fill(inv, -1);
+        for (int i = 0; i < clusters.size(); i++)
+            for (int record : clusters.get(i))
+                inv[record] = i;
+        return inv;
     }
 
     public boolean isUnique() {
@@ -54,26 +54,26 @@ public class PositionListIndex {
     }
 
     public PositionListIndex intersect(PositionListIndex other) {
-        List<IntArrayList> clustersIntersection = this.intersect(this.clusters, other.getInvertedClusters());
-        AttributeList attributesUnion = this.attributes.union(other.getAttributes());
-
-        return new PositionListIndex(attributesUnion, clustersIntersection, this.relationLength());
+        List<IntArrayList> intersection = this.intersect(this.clusters, other.getInvertedClusters());
+        return new PositionListIndex(this.attributes.union(other.getAttributes()), intersection, this.relationLength());
     }
 
-    private List<IntArrayList> intersect(List<IntArrayList> clusters, int[] invertedClusters) {
-        List<IntArrayList> clustersIntersection = new ArrayList<>();
-
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                      DATA INTEGRATION ASSIGNMENT                                           //
-        // Calculate the intersection of one PLI's clusters and another PLI's (conveniently already inverted)         //
-        // invertedClusters. The clustersIntersection is a new list that stores the intersection result. Note that    //
-        // the clusters are "Stripped Partitions", which means that only clusters of size >1 are part of the result.  //
-
-
-
-        //                                                                                                            //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        return clustersIntersection;
+    private List<IntArrayList> intersect(List<IntArrayList> clusters, int[] inv) {
+        List<IntArrayList> res = new ArrayList<>();
+        for (IntArrayList cluster : clusters) {
+            Int2ObjectMap<IntArrayList> sub = new Int2ObjectArrayMap<>();
+            for (int i = 0; i < cluster.size(); i++) {
+                int rec = cluster.getInt(i);
+                int id = inv[rec];
+                if (id != -1) {
+                    if (!sub.containsKey(id)) sub.put(id, new IntArrayList());
+                    sub.get(id).add(rec);
+                }
+            }
+            for (IntArrayList sc : sub.values()) {
+                if (sc.size() > 1) res.add(sc);
+            }
+        }
+        return res;
     }
 }
