@@ -8,46 +8,138 @@ import java.util.Arrays;
 public class SecondLineSchemaMatcher {
 
     /**
-     * Translates the provided similarity matrix into a binary correspondence matrix by selecting possibly optimal
-     * attribute correspondences from the similarities.
-     * @param similarityMatrix A matrix of pair-wise attribute similarities.
-     * @return A CorrespondenceMatrix of pair-wise attribute correspondences.
+     * Converts a continuous similarity score matrix into a binary matching grid
+     * by framing the task as a linear assignment optimization problem.
      */
     public CorrespondenceMatrix match(SimilarityMatrix similarityMatrix) {
-        double[][] simMatrix = similarityMatrix.getMatrix();
+        double[][] weights = similarityMatrix.getMatrix();
+        int rows = weights.length;
+        int cols = weights[0].length;
 
-        int[][] corrMatrix = null;
+        // Map similarity metrics into minimization costs (Cost = 1.0 - Similarity)
+        double[][] distanceGrid = new double[rows][cols];
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                distanceGrid[r][c] = 1.0 - weights[r][c];
+            }
+        }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                      DATA INTEGRATION ASSIGNMENT                                           //
-        // Translate the similarity matrix into a binary correlation matrix by implementing either the StableMarriage //
-        // algorithm or the Hungarian method.                                                                         //
+        int[] optimalMappings = executeKuhnMunkres(distanceGrid);
+        int[][] binaryMatches = buildSelectionGrid(optimalMappings, weights);
 
-
-
-        //                                                                                                            //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        return new CorrespondenceMatrix(corrMatrix, similarityMatrix.getSourceRelation(), similarityMatrix.getTargetRelation());
+        return new CorrespondenceMatrix(
+                binaryMatches,
+                similarityMatrix.getSourceRelation(),
+                similarityMatrix.getTargetRelation()
+        );
     }
 
     /**
-     * Translate an array of source assignments into a correlation matrix. For example, [0,3,2] maps 0->1, 1->3, 2->2
-     * and, therefore, translates into [[1,0,0,0][0,0,0,1][0,0,1,0]].
-     * @param sourceAssignments The list of source assignments.
-     * @param simMatrix The original similarity matrix; just used to determine the number of source and target attributes.
-     * @return The correlation matrix extracted form the source assignments.
+     * Linear assignment optimizer utilizing a modified Hungarian/Kuhn-Munkres routine.
      */
-    private int[][] assignmentArray2correlationMatrix(int[] sourceAssignments, double[][] simMatrix) {
-        int[][] corrMatrix = new int[simMatrix.length][];
-        for (int i = 0; i < simMatrix.length; i++) {
-            corrMatrix[i] = new int[simMatrix[i].length];
-            for (int j = 0; j < simMatrix[i].length; j++)
-                corrMatrix[i][j] = 0;
+    private int[] executeKuhnMunkres(double[][] baseCosts) {
+        int originalRows = baseCosts.length;
+        int originalCols = baseCosts[0].length;
+        int scale = Math.max(originalRows, originalCols);
+
+        double[][] balancedCosts = new double[scale][scale];
+        for (int r = 0; r < scale; r++) {
+            for (int c = 0; c < scale; c++) {
+                balancedCosts[r][c] = (r < originalRows && c < originalCols)
+                        ? baseCosts[r][c]
+                        : 1e9; // Large penalty for padding
+            }
         }
-        for (int i = 0; i < sourceAssignments.length; i++)
-            if (sourceAssignments[i] >= 0)
-                corrMatrix[i][sourceAssignments[i]] = 1;
-        return corrMatrix;
+
+        double[] potentialRow = new double[scale];
+        double[] potentialCol = new double[scale];
+        int[] assignments = new int[scale];
+        Arrays.fill(assignments, -1);
+
+        for (int activeRow = 0; activeRow < scale; activeRow++) {
+            int[] parentLinks = new int[scale];
+            double[] slackValues = new double[scale];
+            boolean[] columnSeen = new boolean[scale];
+
+            Arrays.fill(parentLinks, -1);
+            Arrays.fill(slackValues, Double.POSITIVE_INFINITY);
+
+            int currentElementRow = activeRow;
+            int currentElementCol = -1;
+            int targetedCol;
+
+            do {
+                targetedCol = -1;
+
+                for (int nextCol = 0; nextCol < scale; nextCol++) {
+                    if (!columnSeen[nextCol]) {
+                        double residual = balancedCosts[currentElementRow][nextCol] - potentialRow[currentElementRow] - potentialCol[nextCol];
+
+                        if (residual < slackValues[nextCol]) {
+                            slackValues[nextCol] = residual;
+                            parentLinks[nextCol] = currentElementCol;
+                        }
+
+                        if (targetedCol == -1 || slackValues[nextCol] < slackValues[targetedCol]) {
+                            targetedCol = nextCol;
+                        }
+                    }
+                }
+
+                double stepDelta = slackValues[targetedCol];
+
+                for (int colIdx = 0; colIdx < scale; colIdx++) {
+                    if (columnSeen[colIdx]) {
+                        potentialRow[assignments[colIdx]] += stepDelta;
+                        potentialCol[colIdx] -= stepDelta;
+                    } else {
+                        slackValues[colIdx] -= stepDelta;
+                    }
+                }
+
+                potentialRow[activeRow] += stepDelta;
+                columnSeen[targetedCol] = true;
+                currentElementCol = targetedCol;
+                currentElementRow = assignments[targetedCol];
+
+            } while (currentElementRow != -1);
+
+            // Alternating path updating sequence
+            int tracer = targetedCol;
+            while (parentLinks[tracer] != -1) {
+                assignments[tracer] = assignments[parentLinks[tracer]];
+                tracer = parentLinks[tracer];
+            }
+            assignments[tracer] = activeRow;
+        }
+
+        int[] structuralMapping = new int[originalRows];
+        Arrays.fill(structuralMapping, -1);
+
+        for (int c = 0; c < originalCols; c++) {
+            if (assignments[c] < originalRows) {
+                structuralMapping[assignments[c]] = c;
+            }
+        }
+
+        return structuralMapping;
+    }
+
+    private int[][] buildSelectionGrid(int[] associations, double[][] matrixBounds) {
+        int height = matrixBounds.length;
+        int[][] outputGrid = new int[height][];
+
+        for (int i = 0; i < height; i++) {
+            outputGrid[i] = new int[matrixBounds[i].length];
+        }
+
+        for (int srcIdx = 0; srcIdx < associations.length; srcIdx++) {
+            int tgtIdx = associations[srcIdx];
+            if (tgtIdx >= 0) {
+                outputGrid[srcIdx][tgtIdx] = 1;
+            }
+        }
+
+        return outputGrid;
     }
 }

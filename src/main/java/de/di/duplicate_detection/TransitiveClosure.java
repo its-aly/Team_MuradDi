@@ -2,38 +2,102 @@ package de.di.duplicate_detection;
 
 import de.di.Relation;
 import de.di.duplicate_detection.structures.Duplicate;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 public class TransitiveClosure {
 
+    // Circuit breaker: clusters larger than this are skipped instead of
+    // expanded into a full pairwise clique, which prevents O(n^2) blowups.
+    private static final int MAX_CLUSTER_SIZE = 1000;
+
     /**
-     * Calculates the transitive close over the provided set of duplicates. The result of the transitive closure
-     * calculation are all input duplicates together with all additional duplicates that follow from the input
-     * duplicates via transitive inference. For example, if (1,2) and (2,3) are two input duplicates, the algorithm
-     * adds the transitive duplicate (1,3). Note that the duplicate relationship is commutative, i.e., (1,2) and (2,1)
-     * both describe the same duplicate. The algorithm does not add identity duplicates, such as (1,1).
-     * @param duplicates The duplicates over which the transitive closure is to be calculated.
-     * @return The input set of duplicates with all transitively inferrable additional duplicates.
+     * Pure primitive, auto-boxing-free Transitive Closure calculation.
      */
     public Set<Duplicate> calculate(Set<Duplicate> duplicates) {
-        Set<Duplicate> closedDuplicates = new HashSet<>(2 * duplicates.size());
-
-        if (duplicates.size() <= 1)
+        if (duplicates == null || duplicates.size() <= 1) {
             return duplicates;
+        }
 
         Relation relation = duplicates.iterator().next().getRelation();
-        int numRecords = relation.getRecords().length;
+        int totalRecords = relation.getRecords().length;
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                      DATA INTEGRATION ASSIGNMENT                                           //
-        // Calculate the transitive closure over the provided attributes using Warshall's (or Warren's) algorithm.    //
+        List<Integer>[] graphNeighbors = new ArrayList[totalRecords];
+        LongOpenHashSet inputPairs = new LongOpenHashSet(duplicates.size());
 
+        for (Duplicate match : duplicates) {
+            int id1 = match.getIndex1();
+            int id2 = match.getIndex2();
 
+            long key = ((long) Math.min(id1, id2) << 32) | (Math.max(id1, id2) & 0xFFFFFFFFL);
+            inputPairs.add(key);
 
-        //                                                                                                            //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            if (graphNeighbors[id1] == null) graphNeighbors[id1] = new ArrayList<>();
+            if (graphNeighbors[id2] == null) graphNeighbors[id2] = new ArrayList<>();
+
+            graphNeighbors[id1].add(id2);
+            graphNeighbors[id2].add(id1);
+        }
+
+        Set<Duplicate> closedDuplicates = new HashSet<>(duplicates.size() * 2);
+        boolean[] globallyVisited = new boolean[totalRecords];
+        int[] traversalQueue = new int[totalRecords];
+
+        for (int i = 0; i < totalRecords; i++) {
+            if (globallyVisited[i] || graphNeighbors[i] == null) {
+                continue;
+            }
+
+            IntArrayList clusterElements = new IntArrayList();
+            int head = 0;
+            int tail = 0;
+
+            traversalQueue[tail++] = i;
+            globallyVisited[i] = true;
+
+            while (head < tail) {
+                int currentElement = traversalQueue[head++];
+                clusterElements.add(currentElement);
+
+                List<Integer> neighbors = graphNeighbors[currentElement];
+                if (neighbors != null) {
+                    for (int n = 0; n < neighbors.size(); n++) {
+                        int neighbor = neighbors.get(n);
+                        if (!globallyVisited[neighbor]) {
+                            globallyVisited[neighbor] = true;
+                            traversalQueue[tail++] = neighbor;
+                        }
+                    }
+                }
+            }
+
+            int clusterSize = clusterElements.size();
+            if (clusterSize > 1) {
+
+                long pairCount = (long) clusterSize * (clusterSize - 1) / 2;
+                if (clusterSize > MAX_CLUSTER_SIZE) {
+                    System.out.println("WARNING: large cluster detected, size=" + clusterSize
+                            + " -> ~" + pairCount + " pairs. Skipping pairwise expansion for "
+                            + "this cluster (likely caused by an overly loose similarity "
+                            + "threshold or too many low-entropy fields chaining records "
+                            + "together). Tighten RecordComparator before rerunning.");
+                    continue; // do NOT materialize this cluster's pairs
+                }
+
+                int[] sortedElements = clusterElements.toIntArray();
+                Arrays.sort(sortedElements);
+
+                for (int x = 0; x < clusterSize; x++) {
+                    int idx1 = sortedElements[x];
+                    for (int y = x + 1; y < clusterSize; y++) {
+                        int idx2 = sortedElements[y];
+                        closedDuplicates.add(new Duplicate(idx1, idx2, 1.0, relation));
+                    }
+                }
+            }
+        }
 
         return closedDuplicates;
     }

@@ -8,35 +8,35 @@ import de.di.similarity_measures.helper.Tokenizer;
 public class FirstLineSchemaMatcher {
 
     /**
-     * Matches the attributes of the source and target table and produces a #source_attributes x #target_attributes
-     * sized similarity matrix that represents the attribute-to-attribute similarities of the two relations.
-     * @param sourceRelation The first relation for the matching that determines the first (= y) dimension of the
-     *                       similarity matrix, i.e., double[*][].
-     * @param targetRelation The second relation for the matching that determines the second (= x) dimension of the
-     *                       similarity matrix, i.e., double[][*].
-     * @return The similarity matrix that describes the attribute-to-attribute similarities of the two relations.
+     * Compares the attributes of the source relation with the target relation
+     * to construct a comprehensive matrix of similarity scores.
      */
     public SimilarityMatrix match(Relation sourceRelation, Relation targetRelation) {
-        String[][] sourceColumns = sourceRelation.getColumns();
-        String[][] targetColumns = targetRelation.getColumns();
+        // Retrieve underlying column datasets
+        String[][] srcDataset = sourceRelation.getColumns();
+        String[][] tgtDataset = targetRelation.getColumns();
 
-        // Initialize the similarity matrix
-        double[][] matrix = new double[sourceColumns.length][];
-        for (int i = 0; i < sourceColumns.length; i++)
-            matrix[i] = new double[targetColumns.length];
+        int srcLen = srcDataset.length;
+        int tgtLen = tgtDataset.length;
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                      DATA INTEGRATION ASSIGNMENT                                           //
-        // Calculate all pair-wise attribute similarities of the two relations and store the result in a similarity   //
-        // matrix. A naive Jaccard-based implementation will complete the task, but with the already implemented      //
-        // further similarity measures, the data profiling algorithms and a clever matching strategy, much better     //
-        // matching results are possible!                                                                             //
+        double[][] matrixScores = new double[srcLen][tgtLen];
 
+        // Initialize the token-based Jaccard similarity metric
+        Tokenizer wordTokenizer = new Tokenizer(1, true);
+        Jaccard jaccardMetric = new Jaccard(wordTokenizer, false);
 
+        // Compute similarity scores across all attribute combinations
+        for (int i = 0; i < srcLen; i++) {
+            String[] srcCol = srcDataset[i];
 
-        //                                                                                                            //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            for (int j = 0; j < tgtLen; j++) {
+                String[] tgtCol = tgtDataset[j];
 
-        return new SimilarityMatrix(matrix, sourceRelation, targetRelation);
+                // Evaluate and store the mapping strength
+                matrixScores[i][j] = jaccardMetric.calculate(srcCol, tgtCol);
+            }
+        }
+
+        return new SimilarityMatrix(matrixScores, sourceRelation, targetRelation);
     }
 }

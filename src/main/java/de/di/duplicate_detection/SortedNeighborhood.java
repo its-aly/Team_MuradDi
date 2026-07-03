@@ -13,74 +13,94 @@ import java.util.*;
 
 public class SortedNeighborhood {
 
-    // A Record class that stores the values of a record with its original index. This class helps to remember the
-    // original index of a record when this record is being sorted.
     @Data
     @AllArgsConstructor
-    private static class Record {
-        private int index;
-        private String[] values;
+    private static class DataEntry {
+        private int rowId;
+        private String[] fields;
     }
 
-    /**
-     * Discovers all duplicates in the relation by running the Sorted Neighborhood Method once with every sortingKey.
-     * Each run uses one of the specified sortingKeys for the sorting, the windowsSize for the windowing, and
-     * the recordComparator for the similarity calculations. A pair of records is classified as a duplicate and the
-     * corresponding record indexes are returned as a Duplicate object, if the similarity of the two records w.r.t.
-     * the provided recordComparator is equal to or greater than the similarityThreshold.
-     * @param relation The relation, in which duplicates should be detected.
-     * @param sortingKeys The sorting keys that should be used; a sorting key corresponds to an attribute index, whose
-     *                    lexicographical order should determine a sortation; every specificed sorting key korresponds
-     *                    to one Sorted Neighborhood run and the union of all duplicates of all runs is the result of
-     *                    the call.
-     * @param windowSize The window size each Sorted Neighborhood run should use.
-     * @param recordComparator The record comparator each Sorted Neighborhood run should use when comparing records.
-     * @return The list of discovered duplicate pairs of all Sorted Neighborhood runs.
-     */
     public Set<Duplicate> detectDuplicates(Relation relation, int[] sortingKeys, int windowSize, RecordComparator recordComparator) {
-        Set<Duplicate> duplicates = new HashSet<>();
+        Set<Duplicate> identifiedDuplicates = new HashSet<>();
+        int totalRecords = relation.getRecords().length;
 
-        Record[] records = new Record[relation.getRecords().length];
-        for (int i = 0; i < relation.getRecords().length; i++)
-            records[i] = new Record(i, relation.getRecords()[i]);
+        DataEntry[] wrappedEntries = new DataEntry[totalRecords];
+        for (int i = 0; i < totalRecords; i++) {
+            wrappedEntries[i] = new DataEntry(i, relation.getRecords()[i]);
+        }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                      DATA INTEGRATION ASSIGNMENT                                           //
-        // Discover all duplicates in the provided relation. A duplicate stores the attribute indexes that refer to   //
-        // matching records. Use the provided sortingKeys, windowSize, and recordComparator to implement the Sorted   //
-        // Neighborhood Method correctly.                                                                             //
+        for (int keyIndex : sortingKeys) {
+            Arrays.sort(wrappedEntries, Comparator.comparing(entry -> entry.getFields()[keyIndex]));
 
+            for (int outerIdx = 0; outerIdx < totalRecords; outerIdx++) {
+                int boundaryLimit = Math.min(outerIdx + windowSize, totalRecords);
 
+                for (int innerIdx = outerIdx + 1; innerIdx < boundaryLimit; innerIdx++) {
+                    DataEntry firstItem = wrappedEntries[outerIdx];
+                    DataEntry secondItem = wrappedEntries[innerIdx];
 
-        //                                                                                                            //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                    double similarityScore = recordComparator.compare(firstItem.getFields(), secondItem.getFields());
 
-        return duplicates;
+                    if (recordComparator.isDuplicate(similarityScore, firstItem.getFields(), secondItem.getFields())) {
+                        identifiedDuplicates.add(new Duplicate(
+                                firstItem.getRowId(),
+                                secondItem.getRowId(),
+                                similarityScore,
+                                relation
+                        ));
+                    }
+                }
+            }
+        }
+
+        return identifiedDuplicates;
     }
 
-    /**
-     * Suggests a RecordComparator instance based on the provided relation for duplicate detection purposes.
-     * @param relation The relation a RecordComparator needs to be suggested for.
-     * @return A RecordComparator instance for comparing records of the provided relation.
-     */
     public static RecordComparator suggestRecordComparatorFor(Relation relation) {
-        List<AttrSimWeight> attrSimWeights = new ArrayList<>(relation.getAttributes().length);
-        double threshold = 0.0;
+        List<AttrSimWeight> weightConfigurations = new ArrayList<>();
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //                                      DATA INTEGRATION ASSIGNMENT                                           //
-        // Define the AttrSimWeight objects for a RecordComparator that matches the records of the provided relation  //
-        // possibly well, i.e., duplicate should receive possibly high similarity scores and non-duplicates should    //
-        // receive possibly low scores. In other words, put together a possibly effective ensemble of the already     //
-        // implemented similarity functions for duplicate detections runs on the provided relation. Side note: This   //
-        // is usually learned by machine learning algorithms, but a creative, heuristics-based solution is sufficient //
-        // here.                                                                                                      //
+        double baseThreshold = 0.75;
+        Tokenizer nGramTokenizer = new Tokenizer(3, true);
+        boolean useDamerauVariation = true;
 
+        Integer keyAttribute = null;
 
+        for (int idx = 0; idx < relation.getAttributes().length; idx++) {
+            String label = relation.getAttributes()[idx].toLowerCase();
 
-        //                                                                                                            //
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            if (label.startsWith("track") || label.equals("pk") || label.equals("id")
+                    || label.equals("cdextra") || label.equals("category")) {
+                continue;
+            }
 
-        return new RecordComparator(attrSimWeights, threshold);
+            AttrSimWeight evaluationWeight;
+
+            if (label.equals("title")) {
+                evaluationWeight = new AttrSimWeight(idx, new Levenshtein(useDamerauVariation), 0.5);
+                keyAttribute = idx;
+            } else if (label.equals("artist")) {
+                evaluationWeight = new AttrSimWeight(idx, new Levenshtein(useDamerauVariation), 0.4);
+            } else if (label.equals("genre")) {
+                evaluationWeight = new AttrSimWeight(idx, new Jaccard(nGramTokenizer, true), 0.05);
+            } else if (label.equals("year")) {
+                evaluationWeight = new AttrSimWeight(idx, new Levenshtein(useDamerauVariation), 0.05);
+            } else {
+                continue;
+            }
+
+            weightConfigurations.add(evaluationWeight);
+        }
+
+        if (keyAttribute != null) {
+            return new RecordComparator(
+                    weightConfigurations,
+                    baseThreshold,
+                    keyAttribute,
+                    new Levenshtein(useDamerauVariation),
+                    0.6
+            );
+        }
+
+        return new RecordComparator(weightConfigurations, baseThreshold);
     }
 }
